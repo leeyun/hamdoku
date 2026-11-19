@@ -71,10 +71,11 @@ const Sound = (() => {
       [1047, 1319, 1568, 2093, 2637].forEach((f, i) => tone({ freq: f, dur: 0.12, type: 'triangle', vol: 0.09, delay: i * 0.06 }));
       tone({ freq: 1300, to: 2100, dur: 0.12, vol: 0.14, delay: 0.34, vibrato: 50 });
     },
-    // 화면 가려짐: 뿅 하고 덮이는 소리
-    blinded() {
-      tone({ freq: 200, to: 900, dur: 0.18, type: 'square', vol: 0.05 });
-      tone({ freq: 900, to: 300, dur: 0.25, type: 'triangle', vol: 0.1, delay: 0.16 });
+    // 햄스터 댄스: 통통 튀는 짧은 멜로디
+    dance() {
+      [659, 784, 659, 988, 880, 784, 1047].forEach((f, i) =>
+        tone({ freq: f, dur: 0.11, type: i % 2 ? 'triangle' : 'square', vol: i % 2 ? 0.09 : 0.04, delay: i * 0.12 }),
+      );
     },
     hint() {
       tone({ freq: 880, dur: 0.1, type: 'sine', vol: 0.1 });

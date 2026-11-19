@@ -38,6 +38,8 @@ const state = {
   chatRoomId: null,
   chatIds: new Set(),
   blindShown: false,
+  danceBy: null,
+  danceTimer: null,
 };
 
 // 보드 칸 값: 0 빈칸, 1 X, 2 햄스터, 3 황금 햄스터, 4 힌트로 찾은 햄스터
@@ -555,7 +557,7 @@ const RULES = {
     lead: '아이템전에서는 정답 햄스터 중 일부가 <b>황금 햄스터</b>예요. 12×12는 3마리, 나머지 크기는 2마리. 찾기 전까지는 어느 게 황금인지 몰라요!',
     ok: { marks: ['.g..', '...h', 'h...', '..h.'], caption: '찾으면 아이템 발동!' },
     items: [
-      ['🙈', '화면 가리기', '아직 풀고 있는 상대 한 명의 화면을 5초간 덮어요. 그동안 상대는 아무것도 못 해요.'],
+      ['💃', '햄스터 댄스', '아직 풀고 있는 상대 한 명의 판 위에서 햄스터들이 5초간 이리저리 춤을 추며 일부 칸을 가려요. 가려진 칸은 누를 수 없어요.'],
       ['💡', '햄스터 알려주기', '아직 못 찾은 햄스터 한 마리를 자동으로 찾아줘요.'],
     ],
     tips: ['둘 중 무엇이 나올지는 무작위예요.', '황금 햄스터도 다른 햄스터와 똑같이 세 가지 규칙을 지켜요.'],
@@ -689,7 +691,7 @@ function onRoomState(room) {
 }
 
 function canPlay() {
-  return !!(state.room && state.room.state === 'playing' && state.me && state.me.status === 'playing' && !blindLeft(state.me));
+  return !!(state.room && state.room.state === 'playing' && state.me && state.me.status === 'playing');
 }
 
 // ---------- 내 보드 ----------
@@ -847,7 +849,7 @@ function tryHamster(i) {
 // ---------- 아이템 ----------
 function showMyItem(item) {
   if (item.kind === 'blind') {
-    toast(`✨ 황금 햄스터! ${item.targetName}님의 화면을 5초간 가렸어요 🙈`);
+    toast(`✨ 황금 햄스터! ${item.targetName}님 판에서 햄스터들이 춤을 춰요 💃`);
     return;
   }
   toast('✨ 황금 햄스터! 숨은 햄스터 한 마리를 알려줬어요 💡');
@@ -869,47 +871,61 @@ function onItemUsed(ev) {
     }
   }
   if (ev.kind === 'blind' && ev.targetId === state.user.id) {
-    Sound.blinded();
-    Avatar.react($('#my-avatar'), 'sad', '으앗! 안 보여!');
+    Sound.dance();
+    Avatar.react($('#my-avatar'), 'sad', '앗! 댄스 타임?!');
     if (state.me) state.me.blindUntil = ev.until;
+    state.danceBy = ev.by;
     state.drag = null;
     state.lastTap = null;
     flush();
-    renderBlind(ev.byName);
+    renderBlind();
   }
 }
 
-// 내 화면 가리기 (5초)
-function renderBlind(byName) {
-  const el = $('#blind');
+// 햄스터 댄스 (5초): 공격한 사람의 아바타 햄스터들이 내 판 위 여기저기서 춤추며 일부 칸을 가린다.
+// 가려진 칸은 눌리지 않고, 나머지 칸은 계속 풀 수 있다.
+function renderBlind() {
+  const layer = $('#blind');
   const left = blindLeft(state.me);
   if (!left || !state.room || state.room.state !== 'playing') {
     if (state.blindShown) {
-      el.classList.add('hidden');
-      el.innerHTML = '';
+      layer.classList.add('hidden');
+      layer.innerHTML = '';
       state.blindShown = false;
-      boardEl.classList.toggle('locked', !canPlay());
+      clearInterval(state.danceTimer);
     }
     return;
   }
   if (!state.blindShown) {
     state.blindShown = true;
-    let seeds = '';
-    for (let k = 0; k < 18; k++) {
-      seeds += `<i style="left:${Math.random() * 100}%;animation-delay:${(Math.random() * 1.2).toFixed(2)}s;animation-duration:${(1.4 + Math.random()).toFixed(2)}s">${Art.seed()}</i>`;
+    const attacker = state.room.players.find((p) => p.id === state.danceBy);
+    const n = state.room.size;
+    const count = n >= 12 ? 6 : n >= 9 ? 5 : 4;
+    layer.style.setProperty('--ds', n >= 12 ? '26%' : '30%');
+    let html = `<div class="dance-label">💃 ${attacker ? `${esc(attacker.name)}님의 ` : ''}햄스터 댄스! <b class="dance-count"></b></div>`;
+    for (let k = 0; k < count; k++) {
+      html += `
+        <div class="dancer" style="left:${randomSpot()}%;top:${randomSpot()}%;--dd:${(-Math.random()).toFixed(2)}s">
+          <div class="dancer-cloud"></div>
+          ${Avatar.html(attacker && attacker.avatar, 'dance')}
+          <i class="note">${k % 2 ? '♪' : '♫'}</i>
+        </div>`;
     }
-    el.innerHTML = `
-      <div class="blind-seeds">${seeds}</div>
-      <div class="blind-card">
-        <div class="blind-ham">${Art.hamster({ sad: true })}</div>
-        <div class="blind-title">해바라기씨 폭탄! 🙈</div>
-        <div class="blind-sub">${byName ? `${esc(byName)}님의 황금 햄스터 공격` : '앞이 안 보여요'}</div>
-        <div class="blind-count"></div>
-      </div>`;
-    el.classList.remove('hidden');
-    boardEl.classList.add('locked');
+    layer.innerHTML = html;
+    layer.classList.remove('hidden');
+    clearInterval(state.danceTimer);
+    state.danceTimer = setInterval(() => {
+      for (const d of layer.querySelectorAll('.dancer')) {
+        d.style.left = `${randomSpot()}%`;
+        d.style.top = `${randomSpot()}%`;
+      }
+    }, 1100);
   }
-  el.querySelector('.blind-count').textContent = Math.ceil(left / 1000);
+  layer.querySelector('.dance-count').textContent = Math.ceil(left / 1000);
+}
+
+function randomSpot() {
+  return Math.round(Math.random() * 68);
 }
 
 // ---------- 효과 ----------
@@ -1006,7 +1022,7 @@ setInterval(() => {
     if (!o) continue;
     const left = state.room.state === 'playing' ? blindLeft(p) : 0;
     o.el.classList.toggle('blinded', left > 0);
-    o.blindEl.textContent = left > 0 ? `🙈 ${Math.ceil(left / 1000)}` : '';
+    o.blindEl.textContent = left > 0 ? `💃 댄스 중 ${Math.ceil(left / 1000)}` : '';
   }
 }, 250);
 
@@ -1045,7 +1061,7 @@ function settingsHTML(room, isHost) {
       <button data-mode="item" class="${room.mode === 'item' ? 'on' : ''}" ${dis}>✨ 아이템전</button>
     </div>
     ${room.mode === 'item'
-      ? `<p class="mode-desc">황금 햄스터 ${room.size >= 12 ? 3 : 2}마리가 숨어 있어요. 찾으면 무작위로<br />🙈 상대 한 명 화면 5초 가리기 / 💡 햄스터 하나 알려주기</p>`
+      ? `<p class="mode-desc">황금 햄스터 ${room.size >= 12 ? 3 : 2}마리가 숨어 있어요. 찾으면 무작위로<br />💃 상대 판에서 햄스터 댄스(5초) / 💡 햄스터 하나 알려주기</p>`
       : ''}
     <div class="label">퍼즐 크기</div>
     <div class="seg">${sizes}</div>
@@ -1346,7 +1362,7 @@ $('#emotes').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b || !state.socket) return;
   const now = Date.now();
-  if (now - state.lastEmote < 700) return;
+  if (now - state.lastEmote < 100) return;
   state.lastEmote = now;
   state.socket.emit('chat:emote', { emote: b.dataset.emote });
 });
@@ -1354,9 +1370,14 @@ $('#emotes').addEventListener('click', (e) => {
 function showEmote({ playerId, emote }) {
   const host = playerId === state.user.id ? $('.board-wrap') : state.others.get(playerId) && state.others.get(playerId).el;
   if (!host) return;
+  // 연타해도 겹치지 않게 조금씩 흩뿌리고, 너무 많이 쌓이면 오래된 것부터 지운다
+  const bubbles = host.querySelectorAll('.emote-bubble');
+  if (bubbles.length >= 10) bubbles[0].remove();
   const b = document.createElement('div');
   b.className = 'emote-bubble';
   b.textContent = emote;
+  b.style.right = `${Math.round(Math.random() * 70)}px`;
+  b.style.top = `${-10 - Math.round(Math.random() * 16)}px`;
   host.appendChild(b);
   setTimeout(() => b.remove(), 1900);
   if (playerId !== state.user.id) Sound.other();

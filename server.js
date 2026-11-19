@@ -165,9 +165,9 @@ function resetPlayerForRound(player, n) {
   player.coinsEarned = 0;
 }
 
-// 다 찾으면 남은 해바라기씨가 코인이 된다
+// 다 찾으면 남은 해바라기씨가 코인이 된다. 탈락·포기한 사람은 절대 받지 않는다
 function giveCoins(player, amount) {
-  if (!amount) return;
+  if (!amount || player.status !== 'done') return;
   player.coinsEarned += amount;
   profiles.addCoins(player.id, amount);
   sendProfile(player);
@@ -337,7 +337,7 @@ function placeHamster(room, player, idx, value, autoX) {
   }
 }
 
-// 황금 햄스터 아이템: 다른 사람 화면 가리기 / 햄스터 하나 알려주기
+// 황금 햄스터 아이템: 다른 사람 판 위에서 햄스터 댄스(일부 가리기) / 햄스터 하나 알려주기
 function useItem(room, player, autoX) {
   const now = Date.now();
   const n = room.size;
@@ -360,7 +360,7 @@ function useItem(room, player, autoX) {
   if (kind === 'blind') {
     const target = pick(targets);
     target.blindUntil = now + BLIND_MS;
-    sysChat(room, `✨ ${player.name}님이 황금 햄스터를 찾아 ${target.name}님의 화면을 5초간 가렸어요! 🙈`);
+    sysChat(room, `✨ ${player.name}님이 황금 햄스터를 찾아 ${target.name}님의 판 위에서 햄스터들이 5초간 춤을 춰요! 💃`);
     return { kind, targetId: target.id, targetName: target.name, until: target.blindUntil };
   }
   // 황금이 아닌 햄스터를 먼저 알려준다 (연쇄 발동 방지)
@@ -378,8 +378,9 @@ function getRoomOf(socket) {
   return { room, player: room.players.get(socket.data.user.id) };
 }
 
+// 햄스터 댄스 중에도 안 가려진 칸은 조작할 수 있다 (가려진 칸은 화면에서 눌리지 않음)
 function canAct(room, player) {
-  return room && player && room.state === 'playing' && player.status === 'playing' && player.blindUntil <= Date.now();
+  return room && player && room.state === 'playing' && player.status === 'playing';
 }
 
 io.use((socket, next) => {
@@ -604,6 +605,11 @@ io.on('connection', (socket) => {
     const { room } = getRoomOf(socket);
     const allowed = ['👍', '😮', '😂', '🔥', '🐹', '💦'];
     if (!room || !allowed.includes(emote)) return;
+    // 쿨타임은 거의 없이, 매크로 도배만 막는다 (1초에 10개)
+    const now = Date.now();
+    socket.data.emoteTimes = (socket.data.emoteTimes || []).filter((t) => now - t < 1000);
+    if (socket.data.emoteTimes.length >= 10) return;
+    socket.data.emoteTimes.push(now);
     io.to(room.id).emit('chat:emote', { playerId: user.id, emote });
   });
 
