@@ -120,6 +120,10 @@ function newRoomId() {
   return id;
 }
 
+function defaultGolden(size) {
+  return size >= 12 ? 3 : 2;
+}
+
 function pick(arr) {
   return arr[crypto.randomInt(arr.length)];
 }
@@ -134,7 +138,7 @@ function createPlayer(user) {
     lives: MAX_LIVES,
     found: 0,
     mistakes: 0,
-    status: 'waiting', // waiting | playing | done | out
+    status: 'waiting', // waiting | playing | done | out | survived(혼자 남아 판이 끝남)
     finishMs: null,
     finishRank: null,
     outAt: null,
@@ -165,7 +169,8 @@ function resetPlayerForRound(player, n) {
   player.coinsEarned = 0;
 }
 
-// 다 찾으면 남은 해바라기씨가 코인이 된다. 탈락·포기한 사람은 절대 받지 않는다
+// 다 찾으면 남은 해바라기씨가 코인이 된다. 다 찾은 사람만 받는다
+// (탈락·포기, 혼자 남아서 판이 끝난 사람은 등수 보너스도 없음)
 function giveCoins(player, amount) {
   if (!amount || player.status !== 'done') return;
   player.coinsEarned += amount;
@@ -194,6 +199,7 @@ function publicRoom(room) {
     round: room.round,
     roundMode: room.roundMode,
     goldenCount: room.golden.size,
+    goldenSetting: room.goldenSetting,
     ranked: room.ranked,
     startedAt: room.startedAt,
     now: Date.now(),
@@ -255,33 +261,39 @@ function removePlayer(room, player) {
 
 function checkRoundEnd(room) {
   if (room.state !== 'playing') return;
+  const alive = [...room.players.values()].filter((p) => p.status === 'playing');
   // 접속이 끊긴 사람은 기다리지 않는다
-  const active = [...room.players.values()].filter((p) => p.status === 'playing' && p.sockets.size > 0);
-  if (active.length > 0) return;
-  finishRound(room);
+  if (!alive.some((p) => p.sockets.size > 0)) return finishRound(room);
+  // 여럿이 시작했는데 한 명만 남으면 기다리지 않고 바로 등수 확정
+  if (room.roundSize >= 2 && alive.length === 1) finishRound(room, alive[0]);
 }
 
-function finishRound(room) {
+function finishRound(room, lastOne = null) {
   room.state = 'ended';
   const now = Date.now();
   for (const p of room.players.values()) {
     if (p.status === 'playing') {
-      p.status = 'out';
+      // 끝까지 남아 있던 사람은 생존, 나가버린 사람은 탈락
+      p.status = p.sockets.size > 0 ? 'survived' : 'out';
       p.outAt = now;
     }
     p.blindUntil = 0;
   }
-  // 등수: 완료한 순서 → 많이 찾은 순 → 늦게 탈락한 순
+  // 등수: 완료한 순서 → 생존 → 탈락 (같은 그룹 안에서는 많이 찾은 순 → 늦게 탈락한 순)
+  const group = (p) => (p.finishRank ? 0 : p.status === 'survived' ? 1 : 2);
   const parts = [...room.players.values()].filter((p) => p.status !== 'waiting' && !p.late);
-  parts.sort((a, b) => {
-    if (a.finishRank && b.finishRank) return a.finishRank - b.finishRank;
-    if (a.finishRank) return -1;
-    if (b.finishRank) return 1;
-    return b.found - a.found || (b.outAt || 0) - (a.outAt || 0);
-  });
+  parts.sort(
+    (a, b) =>
+      group(a) - group(b) ||
+      (a.finishRank || 0) - (b.finishRank || 0) ||
+      b.found - a.found ||
+      (b.outAt || 0) - (a.outAt || 0),
+  );
   parts.forEach((p, i) => (p.placement = i + 1));
-  const winner = parts[0] && parts[0].finishRank === 1 ? parts[0] : null;
+  const top = parts[0];
+  const winner = top && (top.finishRank === 1 || top.status === 'survived') ? top : null;
   if (winner) winner.wins += 1;
+  if (lastOne) sysChat(room, `⏱ ${lastOne.name}님 혼자 남아서 바로 등수가 정해졌어요!`);
 
   room.ranked = parts.length >= 2;
   if (room.ranked) {
@@ -300,13 +312,12 @@ function finishRound(room) {
       p.promo = changes[p.id].promo;
       if (p.promo === 'up') sysChat(room, `🎉 ${p.name}님이 ${changes[p.id].after.fullName}(으)로 승급했어요!`);
     }
-    // 랭크 게임 보너스 코인: 1등 +2, 3명 이상이면 2등 +1
+    // 랭크 게임 보너스 코인: 1등 +2, 3명 이상이면 2등 +1 (다 찾은 사람만, giveCoins에서 걸러짐)
     if (winner) giveCoins(winner, 2);
-    const second = parts[1];
-    if (parts.length >= 3 && second && second.finishRank === 2) giveCoins(second, 1);
+    if (parts.length >= 3 && parts[1]) giveCoins(parts[1], 1);
   }
   sysChat(room, winner ? `🏁 ${room.round}판 종료! 우승은 ${winner.name}님 🥇` : `🏁 ${room.round}판 종료! 아무도 다 찾지 못했어요`);
-  io.to(room.id).emit('round:ended', { winnerId: winner ? winner.id : null });
+  io.to(room.id).emit('round:ended', { winnerId: winner ? winner.id : null, lastOneId: lastOne ? lastOne.id : null });
 }
 
 // 찾은 햄스터 주변/같은 행·열·색을 자동으로 X 처리
@@ -421,6 +432,9 @@ io.on('connection', (socket) => {
       state: 'lobby', // lobby | playing | ended
       size: 8,
       mode: 'classic', // 다음 판 설정
+      goldenSetting: defaultGolden(8), // 아이템전 황금 햄스터 수 (1 ~ 판 크기)
+      goldenAuto: true, // 방장이 직접 정하기 전까지는 판 크기에 맞춰 기본값
+      roundSize: 0, // 이번 판을 시작한 인원
       roundMode: 'classic', // 현재/지난 판 모드
       spoiler: 'open', // open | blur
       round: 0,
@@ -469,10 +483,17 @@ io.on('connection', (socket) => {
 
   socket.on('room:leave', () => leaveCurrent());
 
-  socket.on('room:settings', ({ size, spoiler, mode } = {}) => {
+  socket.on('room:settings', ({ size, spoiler, mode, golden } = {}) => {
     const { room } = getRoomOf(socket);
     if (!room || room.hostId !== user.id || room.state === 'playing') return;
-    if (SIZES.includes(size)) room.size = size;
+    if (SIZES.includes(size)) {
+      room.size = size;
+      room.goldenSetting = room.goldenAuto ? defaultGolden(size) : Math.min(room.goldenSetting, size);
+    }
+    if (Number.isInteger(golden) && golden >= 1 && golden <= room.size) {
+      room.goldenSetting = golden;
+      room.goldenAuto = false;
+    }
     if (spoiler === 'open' || spoiler === 'blur') room.spoiler = spoiler;
     if (MODES.includes(mode)) room.mode = mode;
     broadcast(room);
@@ -511,11 +532,12 @@ io.on('connection', (socket) => {
         const j = crypto.randomInt(i + 1);
         [rows[i], rows[j]] = [rows[j], rows[i]];
       }
-      for (const r of rows.slice(0, n >= 12 ? 3 : 2)) room.golden.add(r * n + puzzle.solution[r]);
+      for (const r of rows.slice(0, Math.min(room.goldenSetting, n))) room.golden.add(r * n + puzzle.solution[r]);
     }
     room.startedAt = Date.now();
     room.finishedCount = 0;
     for (const p of room.players.values()) resetPlayerForRound(p, n);
+    room.roundSize = room.players.size;
     reply({ ok: true });
     const modeName = room.mode === 'item' ? `아이템전 (황금 햄스터 ${room.golden.size}마리)` : '클래식전';
     sysChat(room, `🐹 ${room.round}판 시작! ${n}×${n} · ${modeName}`);

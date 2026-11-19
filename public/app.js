@@ -259,10 +259,20 @@ function connect() {
   socket.on('room:state', onRoomState);
   socket.on('player:event', onPlayerEvent);
   socket.on('round:started', () => Sound.click());
-  socket.on('round:ended', ({ winnerId }) => {
+  socket.on('round:ended', ({ winnerId, lastOneId }) => {
     if (!state.user) return;
-    if (winnerId === state.user.id) return; // 내 우승 효과음은 이미 재생됨
-    setTimeout(() => (state.me && state.me.status === 'done' ? Sound.win() : Sound.lose()), 300);
+    const finished = state.me && state.me.status === 'done';
+    if (lastOneId === state.user.id) toast('⏱ 혼자 남아서 바로 등수가 정해졌어요!');
+    if (winnerId === state.user.id) {
+      // 다 찾아서 이긴 경우는 찾을 때 이미 축하했으니, 혼자 살아남아 이긴 경우만
+      if (!finished) {
+        setTimeout(() => Sound.win(), 300);
+        confetti();
+        Avatar.react($('#my-avatar'), 'done', '우승!');
+      }
+      return;
+    }
+    setTimeout(() => (finished ? Sound.win() : Sound.lose()), 300);
   });
   socket.on('chat:emote', showEmote);
   socket.on('chat:message', (msg) => {
@@ -554,7 +564,7 @@ const RULES = {
   gold: {
     tab: '✨ 황금',
     title: '✨ 황금 햄스터 (아이템전)',
-    lead: '아이템전에서는 정답 햄스터 중 일부가 <b>황금 햄스터</b>예요. 12×12는 3마리, 나머지 크기는 2마리. 찾기 전까지는 어느 게 황금인지 몰라요!',
+    lead: '아이템전에서는 정답 햄스터 중 일부가 <b>황금 햄스터</b>예요. 몇 마리일지는 방장이 1마리부터 판 크기만큼 정해요 (기본 2마리, 12×12는 3마리). 찾기 전까지는 어느 게 황금인지 몰라요!',
     ok: { marks: ['.g..', '...h', 'h...', '..h.'], caption: '찾으면 아이템 발동!' },
     items: [
       ['💃', '햄스터 댄스', '아직 풀고 있는 상대 한 명의 판 위에서 햄스터들이 5초간 이리저리 춤을 추며 일부 칸을 가려요. 가려진 칸은 누를 수 없어요.'],
@@ -1049,6 +1059,21 @@ $('#btn-giveup').addEventListener('click', () => {
 });
 
 // ---------- 오버레이 (대기실 / 결과) ----------
+// 황금 햄스터 수: 1 ~ 판 크기(행/열 수)
+function goldSettingHTML(room, isHost) {
+  const g = room.goldenSetting;
+  const off = (cond) => (!isHost || cond ? 'disabled' : '');
+  return `
+    <div class="label">황금 햄스터 수 <span class="muted">(1 ~ ${room.size}마리)</span></div>
+    <div class="gold-stepper">
+      <button data-gold="${g - 1}" ${off(g <= 1)}>−</button>
+      <input type="range" id="gold-range" min="1" max="${room.size}" value="${g}" ${off(false)} />
+      <b class="gold-num">✨ <span id="gold-num">${g}</span>마리</b>
+      <button data-gold="${g + 1}" ${off(g >= room.size)}>+</button>
+    </div>
+    <p class="mode-desc">${g === room.size ? '모든 햄스터가 황금이에요! ' : ''}찾으면 무작위로<br />💃 상대 판에서 햄스터 댄스(5초) / 💡 햄스터 하나 알려주기</p>`;
+}
+
 function settingsHTML(room, isHost) {
   const dis = isHost ? '' : 'disabled';
   const sizes = SIZES
@@ -1060,9 +1085,7 @@ function settingsHTML(room, isHost) {
       <button data-mode="classic" class="${room.mode === 'classic' ? 'on' : ''}" ${dis}>🐹 클래식전</button>
       <button data-mode="item" class="${room.mode === 'item' ? 'on' : ''}" ${dis}>✨ 아이템전</button>
     </div>
-    ${room.mode === 'item'
-      ? `<p class="mode-desc">황금 햄스터 ${room.size >= 12 ? 3 : 2}마리가 숨어 있어요. 찾으면 무작위로<br />💃 상대 판에서 햄스터 댄스(5초) / 💡 햄스터 하나 알려주기</p>`
-      : ''}
+    ${room.mode === 'item' ? goldSettingHTML(room, isHost) : ''}
     <div class="label">퍼즐 크기</div>
     <div class="seg">${sizes}</div>
     <div class="label">친구 화면 (게임 중)</div>
@@ -1114,10 +1137,13 @@ function renderOverlay() {
   const medals = ['🥇', '🥈', '🥉', '4️⃣'];
   const rows = ordered
     .map((p) => {
-      const medal = p.placement ? (p.finishRank ? medals[p.placement - 1] : '😵') : '👀';
-      const meta = p.finishRank
-        ? `${fmtTime(p.finishMs)} · 실수 ${p.mistakes}번`
-        : p.status === 'waiting' ? '구경' : `${p.found}/${room.size} 찾음 · 탈락`;
+      const ranked = p.finishRank || p.status === 'survived';
+      const medal = p.placement ? (ranked ? medals[p.placement - 1] : '😵') : '👀';
+      let meta;
+      if (p.finishRank) meta = `${fmtTime(p.finishMs)} · 실수 ${p.mistakes}번`;
+      else if (p.status === 'survived') meta = `${p.found}/${room.size} 찾음 · 끝까지 생존`;
+      else if (p.status === 'waiting') meta = '구경';
+      else meta = `${p.found}/${room.size} 찾음 · 탈락`;
       let lp = '<span class="muted small">랭크 미반영</span>';
       if (p.lpDelta != null) {
         const cls = p.lpDelta > 0 ? 'up' : p.lpDelta < 0 ? 'down' : '';
@@ -1163,6 +1189,16 @@ function fitOverlay() {
 }
 window.addEventListener('resize', fitOverlay);
 
+// 황금 햄스터 수 슬라이더: 끄는 동안은 숫자만, 놓으면 저장
+$('#overlay').addEventListener('input', (e) => {
+  if (e.target.id === 'gold-range') $('#gold-num').textContent = e.target.value;
+});
+$('#overlay').addEventListener('change', (e) => {
+  if (e.target.id !== 'gold-range') return;
+  Sound.click();
+  state.socket.emit('room:settings', { golden: Number(e.target.value) });
+});
+
 $('#overlay').addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t || t.disabled) return;
@@ -1176,6 +1212,9 @@ $('#overlay').addEventListener('click', (e) => {
   } else if (t.dataset.mode) {
     Sound.click();
     state.socket.emit('room:settings', { mode: t.dataset.mode });
+  } else if (t.dataset.gold) {
+    Sound.click();
+    state.socket.emit('room:settings', { golden: Number(t.dataset.gold) });
   } else if (t.dataset.action === 'invite') {
     copyInvite();
   } else if (t.dataset.action === 'peek') {
@@ -1239,6 +1278,7 @@ function renderOthers() {
     else if (room.state === 'lobby') badge = '<span class="badge">대기 중</span>';
     else if (p.status === 'done') badge = `<span class="badge done">${p.finishRank}등 완료</span>`;
     else if (p.status === 'out') badge = '<span class="badge out">탈락</span>';
+    else if (p.status === 'survived') badge = `<span class="badge done">${p.placement}등 생존</span>`;
     else badge = '';
     let seeds = '';
     for (let k = 0; k < room.maxLives; k++) seeds += Art.seed(k < p.lives);

@@ -762,3 +762,15 @@ button.rule::after {
   .shop-preview { width: 100px; height: 100px; }
   .hide-sm { display: none; }
 }
+
+/* 아이템전 황금 햄스터 수 */
+.gold-stepper {
+  display: flex; align-items: center; gap: 8px; background: var(--card-2); border-radius: 14px; padding: 6px 8px;
+}
+.gold-stepper button {
+  width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer; font-size: 18px; line-height: 1;
+  background: #fff; box-shadow: 0 2px 0 #e5d2bb;
+}
+.gold-stepper button:disabled { opacity: 0.4; cursor: default; }
+.gold-stepper input[type='range'] { flex: 1; min-width: 0; padding: 0; border: none; accent-color: #e0a800; }
+.gold-num { font-weight: normal; color: #a07400; min-width: 72px; text-align: center; }
