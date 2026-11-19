@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { Worker } = require('worker_threads');
 const { OAuth2Client } = require('google-auth-library');
 const ranks = require('./rank');
+const profiles = require('./profile');
 
 // 큰 퍼즐(12×12)은 생성에 1초 이상 걸릴 수 있어 별도 스레드에서 만든다
 function generatePuzzleAsync(size) {
@@ -142,6 +143,7 @@ function createPlayer(user) {
     placement: null,
     lpDelta: null,
     promo: null,
+    coinsEarned: 0,
     wins: 0,
   };
 }
@@ -160,6 +162,20 @@ function resetPlayerForRound(player, n) {
   player.placement = null;
   player.lpDelta = null;
   player.promo = null;
+  player.coinsEarned = 0;
+}
+
+// 다 찾으면 남은 해바라기씨가 코인이 된다
+function giveCoins(player, amount) {
+  if (!amount) return;
+  player.coinsEarned += amount;
+  profiles.addCoins(player.id, amount);
+  sendProfile(player);
+}
+
+function sendProfile(player) {
+  const data = profiles.get(player.id);
+  for (const sid of player.sockets) io.to(sid).emit('profile:update', data);
 }
 
 function rankBadge(id) {
@@ -200,8 +216,10 @@ function publicRoom(room) {
       placement: p.placement,
       lpDelta: p.lpDelta,
       promo: p.promo,
+      coinsEarned: p.coinsEarned,
       wins: p.wins,
       rank: rankBadge(p.id),
+      avatar: profiles.equipped(p.id),
     })),
   };
 }
@@ -282,6 +300,10 @@ function finishRound(room) {
       p.promo = changes[p.id].promo;
       if (p.promo === 'up') sysChat(room, `🎉 ${p.name}님이 ${changes[p.id].after.fullName}(으)로 승급했어요!`);
     }
+    // 랭크 게임 보너스 코인: 1등 +2, 3명 이상이면 2등 +1
+    if (winner) giveCoins(winner, 2);
+    const second = parts[1];
+    if (parts.length >= 3 && second && second.finishRank === 2) giveCoins(second, 1);
   }
   sysChat(room, winner ? `🏁 ${room.round}판 종료! 우승은 ${winner.name}님 🥇` : `🏁 ${room.round}판 종료! 아무도 다 찾지 못했어요`);
   io.to(room.id).emit('round:ended', { winnerId: winner ? winner.id : null });
@@ -310,6 +332,7 @@ function placeHamster(room, player, idx, value, autoX) {
     room.finishedCount += 1;
     player.finishRank = room.finishedCount;
     player.blindUntil = 0;
+    giveCoins(player, player.lives);
     sysChat(room, `${['🥇', '🥈', '🥉', '🎖️'][player.finishRank - 1] || '🎖️'} ${player.name}님이 ${player.finishRank}등으로 다 찾았어요!`);
   }
 }
@@ -602,7 +625,36 @@ io.on('connection', (socket) => {
   });
 
   socket.on('rank:top', (_, ack) => {
-    if (typeof ack === 'function') ack({ list: ranks.leaderboard(30), guide: ranks.guide() });
+    if (typeof ack !== 'function') return;
+    const list = ranks.leaderboard(30).map((r) => ({ ...r, avatar: profiles.equipped(r.id) }));
+    ack({ list, guide: ranks.guide() });
+  });
+
+  // ---------- 상점 ----------
+  // 아바타가 바뀌면 같은 방 사람들에게도 보이게
+  function afterProfileChange() {
+    const { room, player } = getRoomOf(socket);
+    if (player) sendProfile(player);
+    else socket.emit('profile:update', profiles.get(user.id));
+    if (room) broadcast(room);
+  }
+
+  socket.on('profile:me', (_, ack) => {
+    if (typeof ack === 'function') ack(profiles.get(user.id));
+  });
+
+  socket.on('shop:buy', ({ itemId } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const result = profiles.buy(user.id, String(itemId || ''));
+    reply({ ...result, profile: profiles.get(user.id) });
+    if (result.ok) afterProfileChange();
+  });
+
+  socket.on('shop:equip', ({ slot, itemId } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const result = profiles.equip(user.id, String(slot || ''), itemId == null ? null : String(itemId));
+    reply({ ...result, profile: profiles.get(user.id) });
+    if (result.ok) afterProfileChange();
   });
 
   socket.on('disconnect', () => {
