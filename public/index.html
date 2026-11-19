@@ -34,7 +34,7 @@
   <section id="screen-home" class="screen hidden">
     <div class="card center-card">
       <div class="me-row">
-        <div class="avatar" id="home-avatar"></div>
+        <div class="ham-avatar avatar" id="home-avatar"></div>
         <div><div class="muted small">안녕하세요!</div><div id="home-name" class="big-name"></div></div>
         <button id="btn-logout" class="btn-text">로그아웃</button>
       </div>
@@ -56,7 +56,10 @@
           <li><b>랭크</b>: 2명 이상이 끝까지 한 판은 등수에 따라 LP가 오르내려요</li>
         </ul>
       </details>
-      <button id="btn-leaderboard" class="btn btn-sub wide-sub">🏆 랭킹 보기</button>
+      <div class="home-btns">
+        <button id="btn-shop-home" class="btn btn-sub">🛒 상점 <span class="coin-chip"></span></button>
+        <button id="btn-leaderboard" class="btn btn-sub">🏆 랭킹</button>
+      </div>
     </div>
   </section>
 
@@ -70,8 +73,9 @@
         <span class="muted small">방 코드</span>
         <b id="room-code"></b>
       </div>
-      <button id="btn-invite" class="btn btn-sub btn-sm">🔗 초대 링크 복사</button>
+      <button id="btn-invite" class="btn btn-sub btn-sm">🔗 초대<span class="hide-sm"> 링크 복사</span></button>
       <div class="spacer"></div>
+      <button id="btn-shop" class="btn btn-sub btn-sm shop-btn" title="상점">🛒 <span class="coin-chip"></span></button>
       <button id="btn-sound" class="icon-btn" title="소리"></button>
     </header>
 
@@ -86,20 +90,27 @@
       </section>
 
       <div class="play-col">
-        <div class="hud">
-          <div class="pill">
-            <div class="pill-ham" data-hamster></div>
-            <span><b id="hud-found">0</b>/<span id="hud-total">0</span></span>
-          </div>
-          <div class="pill" id="hud-lives"></div>
-          <div class="pill timer" id="hud-timer">00:00</div>
-        </div>
+        <div class="play-top">
+          <button class="my-avatar-box" id="my-avatar-box" title="쓰다듬기">
+            <div id="my-avatar" class="ham-avatar talk"></div>
+          </button>
+          <div class="play-top-main">
+            <div class="hud">
+              <div class="pill">
+                <div class="pill-ham" data-hamster></div>
+                <span><b id="hud-found">0</b>/<span id="hud-total">0</span></span>
+              </div>
+              <div class="pill" id="hud-lives"></div>
+              <div class="pill timer" id="hud-timer">00:00</div>
+            </div>
 
-        <div class="rules" title="눌러서 자세한 규칙 보기">
-          <button class="rule" data-rule="color"><span class="rule-ico">🎨</span><span>색깔당<br />햄스터 1마리</span></button>
-          <button class="rule" data-rule="line"><span class="rule-ico">➕</span><span>행과 열마다<br />햄스터 1마리</span></button>
-          <button class="rule" data-rule="touch"><span class="rule-ico">🚫</span><span>햄스터<br />접촉 불가</span></button>
-          <button class="rule gold-rule hidden" id="rule-gold" data-rule="gold"><span class="rule-ico">✨</span><span id="rule-gold-text"></span></button>
+            <div class="rules" title="눌러서 자세한 규칙 보기">
+              <button class="rule" data-rule="color"><span class="rule-ico">🎨</span><span>색깔당<br />햄스터 1마리</span></button>
+              <button class="rule" data-rule="line"><span class="rule-ico">➕</span><span>행과 열마다<br />햄스터 1마리</span></button>
+              <button class="rule" data-rule="touch"><span class="rule-ico">🚫</span><span>햄스터<br />접촉 불가</span></button>
+              <button class="rule gold-rule hidden" id="rule-gold" data-rule="gold"><span class="rule-ico">✨</span><span id="rule-gold-text"></span></button>
+            </div>
+          </div>
         </div>
 
         <div class="board-wrap">
@@ -140,7 +151,30 @@
       <button class="modal-close" data-close>✕</button>
       <div class="seg rule-tabs" id="rule-tabs"></div>
       <div id="rule-body"></div>
-      <p class="rule-foot">틀린 칸을 더블클릭하면 해바라기씨(생명)가 하나 줄어요. 3번 틀리면 탈락!</p>
+      <p class="rule-foot">틀린 칸을 더블클릭하면 해바라기씨(생명)가 하나 줄어요. 3번 틀리면 탈락!<br />다 찾으면 남은 해바라기씨는 상점 코인이 돼요 🛒</p>
+    </div>
+  </div>
+
+  <!-- 상점 -->
+  <div id="shop-modal" class="modal hidden">
+    <div class="panel modal-panel shop-panel">
+      <button class="modal-close" data-close>✕</button>
+      <h2>🛒 해바라기씨 상점</h2>
+      <div class="shop-top">
+        <div class="shop-preview">
+          <div id="shop-avatar" class="ham-avatar talk"></div>
+        </div>
+        <div class="shop-info">
+          <div class="shop-coins"><span id="shop-seed"></span><b id="shop-coins">0</b><span class="muted small">개</span></div>
+          <p class="muted small">
+            판을 다 찾으면 <b>남은 해바라기씨</b>가 그대로 코인이 돼요.<br />
+            랭크 게임 1등 +2, (3명 이상일 때) 2등 +1 보너스!
+          </p>
+          <button class="btn-text" id="shop-reset">입어보기 되돌리기</button>
+        </div>
+      </div>
+      <div class="seg" id="shop-tabs"></div>
+      <div class="shop-grid" id="shop-grid"></div>
     </div>
   </div>
 
@@ -161,6 +195,8 @@
   <div id="fx" class="fx"></div>
 
   <script src="/hamster.js"></script>
+  <script src="/catalog.js"></script>
+  <script src="/avatar.js"></script>
   <script src="/sound.js"></script>
   <script src="/app.js"></script>
 </body>

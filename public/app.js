@@ -78,9 +78,9 @@ function fillHamsters(root = document) {
   for (const el of root.querySelectorAll('[data-hamster]')) if (!el.innerHTML.trim()) el.innerHTML = Art.hamster();
 }
 
+// 모든 목록에서 쓰는 작은 햄스터 아바타 (착용 아이템 포함)
 function avatarHTML(p) {
-  if (p.picture) return `<div class="avatar"><img src="${esc(p.picture)}" alt="" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover"></div>`;
-  return `<div class="avatar">${Art.hamster()}</div>`;
+  return Avatar.html(p && p.avatar, 'avatar');
 }
 
 function tierHTML(rank, { full = false, lp = false } = {}) {
@@ -268,6 +268,8 @@ function connect() {
     if (msg.type === 'user' && msg.userId !== state.user.id) Sound.chat();
   });
   socket.on('item:used', onItemUsed);
+  socket.on('profile:update', setProfile);
+  socket.emit('profile:me', {}, setProfile);
 }
 
 // ---------- 홈 ----------
@@ -277,10 +279,146 @@ function showHome() {
   state.boardKey = null;
   if (location.pathname !== '/') history.replaceState(null, '', '/');
   $('#home-name').textContent = state.user.name;
-  $('#home-avatar').outerHTML = avatarHTML(state.user).replace('class="avatar"', 'class="avatar" id="home-avatar"');
+  renderProfileBits();
   show('home');
   renderHomeRank();
 }
+
+// ---------- 프로필 / 코인 / 내 아바타 ----------
+function myEquipped() {
+  return (state.profile && state.profile.equipped) || {};
+}
+
+function setProfile(profile) {
+  if (!profile) return;
+  const before = state.profile ? state.profile.coins : null;
+  state.profile = profile;
+  renderProfileBits();
+  if (before != null && profile.coins > before && state.roomId) coinPop(profile.coins - before);
+  if (!$('#shop-modal').classList.contains('hidden')) renderShop();
+}
+
+function renderProfileBits() {
+  const coins = state.profile ? state.profile.coins : 0;
+  for (const el of document.querySelectorAll('.coin-chip')) el.innerHTML = `${Art.seed()}${coins}`;
+  const key = JSON.stringify(myEquipped());
+  if (state.myAvatarKey !== key) {
+    state.myAvatarKey = key;
+    $('#my-avatar').innerHTML = Avatar.svg(myEquipped());
+    $('#home-avatar').innerHTML = Avatar.svg(myEquipped());
+  }
+}
+
+// 코인을 받으면 내 아바타 위로 +N
+function coinPop(amount) {
+  const box = $('#my-avatar-box');
+  const el = document.createElement('div');
+  el.className = 'coin-pop';
+  el.innerHTML = `+${amount} ${Art.seed()}`;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+  Sound.hint();
+}
+
+// ---------- 상점 ----------
+function openShop() {
+  if (!state.profile) return;
+  Sound.click();
+  state.tryOn = { ...myEquipped() };
+  state.shopTab = state.shopTab || 'hat';
+  renderShop();
+  $('#shop-modal').classList.remove('hidden');
+}
+
+function renderShop() {
+  const profile = state.profile;
+  const tab = state.shopTab;
+  $('#shop-seed').innerHTML = Art.seed();
+  $('#shop-coins').textContent = profile.coins;
+  $('#shop-avatar').innerHTML = Avatar.svg(state.tryOn);
+  $('#shop-tabs').innerHTML = CATALOG.slots
+    .map((s) => `<button data-shop-tab="${s.key}" class="${s.key === tab ? 'on' : ''}">${s.icon} ${s.name}</button>`)
+    .join('');
+  const worn = profile.equipped[tab];
+  const cards = [
+    `<div class="shop-item${!worn ? ' worn' : ''}" data-try="">
+       <div class="shop-thumb">${Avatar.svg({ ...state.tryOn, [tab]: null })}</div>
+       <div class="shop-name">기본 (안 씀)</div>
+       ${worn ? `<button class="btn btn-sub btn-sm" data-equip="">벗기</button>` : '<span class="shop-state">착용 중</span>'}
+     </div>`,
+  ];
+  for (const item of CATALOG.items.filter((i) => i.slot === tab)) {
+    const owned = profile.owned.includes(item.id);
+    const isWorn = worn === item.id;
+    let action;
+    if (isWorn) action = '<span class="shop-state">착용 중</span>';
+    else if (owned) action = `<button class="btn btn-sub btn-sm" data-equip="${item.id}">착용</button>`;
+    else {
+      const poor = profile.coins < item.price;
+      action = `<button class="btn btn-main btn-sm" data-buy="${item.id}" ${poor ? 'disabled' : ''}>${Art.seed()} ${item.price}</button>`;
+    }
+    cards.push(`
+      <div class="shop-item${isWorn ? ' worn' : ''}${state.tryOn[tab] === item.id ? ' trying' : ''}" data-try="${item.id}">
+        <div class="shop-thumb">${Avatar.svg({ ...state.tryOn, [tab]: item.id })}</div>
+        <div class="shop-name">${esc(item.name)}</div>
+        ${action}
+      </div>`);
+  }
+  $('#shop-grid').innerHTML = cards.join('');
+}
+
+$('#shop-tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-shop-tab]');
+  if (!b) return;
+  Sound.click();
+  state.shopTab = b.dataset.shopTab;
+  renderShop();
+});
+
+$('#shop-grid').addEventListener('click', (e) => {
+  const buy = e.target.closest('[data-buy]');
+  const equip = e.target.closest('[data-equip]');
+  const tab = state.shopTab;
+  if (buy) {
+    if (buy.disabled) return;
+    state.socket.emit('shop:buy', { itemId: buy.dataset.buy }, (res) => {
+      if (!res.ok) return toast(res.error);
+      state.tryOn[tab] = buy.dataset.buy;
+      setProfile(res.profile);
+      Sound.promote();
+      Avatar.react($('#shop-avatar'), 'cheer', '새 옷이다!');
+      toast('구매 완료! 바로 입었어요 🐹');
+    });
+    return;
+  }
+  if (equip) {
+    const itemId = equip.dataset.equip || null;
+    state.socket.emit('shop:equip', { slot: tab, itemId }, (res) => {
+      if (!res.ok) return toast(res.error);
+      state.tryOn[tab] = itemId;
+      setProfile(res.profile);
+      Sound.click();
+      Avatar.react($('#shop-avatar'), 'cheer', itemId ? '어때?' : '홀가분!');
+    });
+    return;
+  }
+  const card = e.target.closest('[data-try]');
+  if (!card) return;
+  // 카드를 누르면 입어보기만
+  state.tryOn[tab] = card.dataset.try || null;
+  renderShop();
+  Avatar.react($('#shop-avatar'), 'cheer', '어울려?');
+});
+
+$('#shop-reset').addEventListener('click', () => {
+  state.tryOn = { ...myEquipped() };
+  renderShop();
+});
+$('#btn-shop').addEventListener('click', openShop);
+$('#btn-shop-home').addEventListener('click', openShop);
+$('#my-avatar-box').addEventListener('click', () => {
+  Avatar.react($('#my-avatar'), 'cheer', '안녕!');
+});
 
 function renderHomeRank() {
   const card = $('#home-rank');
@@ -559,7 +697,7 @@ function buildBoard() {
   const room = state.room;
   const n = room.size;
   boardEl.style.setProperty('--n', n);
-  boardEl.parentElement.classList.toggle('big', n >= 10);
+  boardEl.closest('.play-col').classList.toggle('big', n >= 10);
   boardEl.innerHTML = '';
   state.cells = [];
   for (let i = 0; i < n * n; i++) {
@@ -682,9 +820,11 @@ function tryHamster(i) {
     const hintIdx = res.item && res.item.kind === 'reveal' ? res.item.index : -1;
     for (let k = 0; k < state.cells.length; k++) paintCell(k, (found && k === i) || k === hintIdx);
     const cell = state.cells[i];
+    const myAv = $('#my-avatar');
     if (found) {
       res.result === 'golden' ? Sound.golden() : Sound.found();
       sparkle(cell, res.result === 'golden');
+      Avatar.react(myAv, res.status === 'done' ? 'done' : res.result === 'golden' ? 'gold' : 'cheer');
       if (res.item) showMyItem(res.item);
       if (res.status === 'done') {
         setTimeout(() => Sound.win(), 450);
@@ -692,6 +832,7 @@ function tryHamster(i) {
       }
     } else {
       Sound.wrong();
+      Avatar.react(myAv, 'sad');
       cell.classList.remove('wrong');
       void cell.offsetWidth;
       cell.classList.add('wrong');
@@ -714,6 +855,7 @@ function showMyItem(item) {
   setTimeout(() => {
     Sound.hint();
     if (cell) sparkle(cell);
+    Avatar.react($('#my-avatar'), 'cheer', '힌트 냠!');
   }, 450);
 }
 
@@ -728,6 +870,7 @@ function onItemUsed(ev) {
   }
   if (ev.kind === 'blind' && ev.targetId === state.user.id) {
     Sound.blinded();
+    Avatar.react($('#my-avatar'), 'sad', '으앗! 안 보여!');
     if (state.me) state.me.blindUntil = ev.until;
     state.drag = null;
     state.lastTap = null;
@@ -970,7 +1113,7 @@ function renderOverlay() {
           <span class="medal">${medal}</span>
           ${avatarHTML(p)}
           <div class="info"><div class="nm">${esc(p.name)}${p.id === me.id ? ' (나)' : ''}</div><div class="meta">${meta}</div>${tierHTML(p.rank)}</div>
-          <div class="pts">${lp}${promo}<div class="meta">🏆 ${p.wins}승</div></div>
+          <div class="pts">${lp}${promo}${p.coinsEarned ? `<div class="coin-earn">+${p.coinsEarned}${Art.seed()}</div>` : ''}<div class="meta">🏆 ${p.wins}승</div></div>
         </div>`;
     })
     .join('');
@@ -1058,8 +1201,19 @@ function renderOthers() {
     if (!o) {
       const el = document.createElement('div');
       el.className = 'other';
-      el.innerHTML = `<div class="other-head"></div><div class="mini-wrap"><div class="mini"></div><div class="mini-blind"></div></div>`;
-      o = { el, key: null, cells: [], board: '', blindEl: el.querySelector('.mini-blind') };
+      el.innerHTML = `
+        <div class="other-head"><div class="oh-avatar"></div><div class="oh-info"></div></div>
+        <div class="mini-wrap"><div class="mini"></div><div class="mini-avatar ham-avatar talk"></div><div class="mini-blind"></div></div>`;
+      o = {
+        el,
+        key: null,
+        cells: [],
+        board: '',
+        avatarKey: null,
+        blindEl: el.querySelector('.mini-blind'),
+        headAv: el.querySelector('.oh-avatar'),
+        miniAv: el.querySelector('.mini-avatar'),
+      };
       state.others.set(p.id, o);
     }
     container.appendChild(o.el); // 순서 유지
@@ -1072,8 +1226,14 @@ function renderOthers() {
     else badge = '';
     let seeds = '';
     for (let k = 0; k < room.maxLives; k++) seeds += Art.seed(k < p.lives);
-    o.el.querySelector('.other-head').innerHTML = `
-      ${avatarHTML(p)}
+    // 아바타는 바뀔 때만 다시 그린다 (몸짓 애니메이션이 끊기지 않게)
+    const avKey = JSON.stringify(p.avatar || {});
+    if (o.avatarKey !== avKey) {
+      o.avatarKey = avKey;
+      o.headAv.innerHTML = avatarHTML(p);
+      o.miniAv.innerHTML = Avatar.svg(p.avatar);
+    }
+    o.el.querySelector('.oh-info').innerHTML = `
       <div class="other-who">
         <span class="other-name">${room.hostId === p.id ? '👑 ' : ''}${esc(p.name)}</span>
         ${tierHTML(p.rank)}
@@ -1144,6 +1304,10 @@ function onPlayerEvent({ playerId, type, index }) {
   void c.offsetWidth;
   c.classList.add('pulse');
   if (type === 'correct' || type === 'golden') Sound.other();
+  // 친구 아바타도 같이 몸짓
+  const kind = type === 'golden' ? 'gold' : type === 'correct' ? 'cheer' : 'sad';
+  Avatar.react(o.miniAv, kind);
+  Avatar.react(o.headAv.firstElementChild, kind);
 }
 
 // ---------- 채팅 ----------
