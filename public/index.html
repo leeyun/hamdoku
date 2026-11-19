@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>햄스터 찾기 퍼즐</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <!-- 로그인 -->
+  <section id="screen-login" class="screen hidden">
+    <div class="card center-card">
+      <div class="logo-hamster bob" data-hamster></div>
+      <h1 class="title">햄스터 찾기 퍼즐</h1>
+      <p class="sub">색깔마다, 줄마다 한 마리씩!<br />친구들과 최대 4명이 함께 찾아요</p>
+      <div id="google-btn" class="google-btn"></div>
+      <p id="google-off" class="muted small hidden">구글 로그인이 아직 설정되지 않았어요 (.env의 GOOGLE_CLIENT_ID)</p>
+      <form id="guest-form" class="guest-form hidden">
+        <div class="divider"><span>또는 게스트로</span></div>
+        <input id="guest-name" maxlength="16" placeholder="닉네임" autocomplete="off" />
+        <button class="btn btn-sub" type="submit">입장</button>
+      </form>
+      <p id="login-error" class="error small"></p>
+    </div>
+  </section>
+
+  <!-- 홈 -->
+  <section id="screen-home" class="screen hidden">
+    <div class="card center-card">
+      <div class="me-row">
+        <div class="avatar" id="home-avatar"></div>
+        <div><div class="muted small">안녕하세요!</div><div id="home-name" class="big-name"></div></div>
+        <button id="btn-logout" class="btn-text">로그아웃</button>
+      </div>
+      <button id="home-rank" class="rank-card" title="랭킹 보기"></button>
+      <button id="btn-create" class="btn btn-main wide">방 만들기</button>
+      <form id="join-form" class="join-form">
+        <input id="join-code" maxlength="6" placeholder="방 코드 6자리" autocomplete="off" />
+        <button class="btn btn-sub" type="submit">참가</button>
+      </form>
+      <details class="howto">
+        <summary>게임 방법</summary>
+        <ul>
+          <li>같은 <b>색깔</b> 영역마다 햄스터가 정확히 1마리</li>
+          <li>모든 <b>행</b>과 <b>열</b>에도 1마리씩</li>
+          <li>햄스터끼리는 <b>대각선 포함</b> 서로 닿지 않아요</li>
+          <li><b>클릭/드래그</b>로 X 표시, <b>더블클릭</b>으로 햄스터 찾기</li>
+          <li>틀리면 해바라기씨(생명)를 하나 잃어요. 3개 모두 잃으면 탈락!</li>
+          <li><b>아이템전</b>: 황금 햄스터(12×12는 3마리, 나머지 2마리)를 찾으면 아이템 발동!<br />🙈 무작위 상대 화면 5초 가리기 / 💡 햄스터 하나 알려주기</li>
+          <li><b>랭크</b>: 2명 이상이 끝까지 한 판은 등수에 따라 LP가 오르내려요</li>
+        </ul>
+      </details>
+      <button id="btn-leaderboard" class="btn btn-sub wide-sub">🏆 랭킹 보기</button>
+    </div>
+  </section>
+
+  <!-- 방 -->
+  <section id="screen-room" class="screen hidden">
+    <header class="topbar">
+      <button id="btn-leave" class="icon-btn" title="나가기">
+        <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="room-code">
+        <span class="muted small">방 코드</span>
+        <b id="room-code"></b>
+      </div>
+      <button id="btn-invite" class="btn btn-sub btn-sm">🔗 초대 링크 복사</button>
+      <div class="spacer"></div>
+      <button id="btn-sound" class="icon-btn" title="소리"></button>
+    </header>
+
+    <main class="room-main">
+      <section class="chat">
+        <h3 class="side-title">💬 채팅</h3>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" maxlength="200" placeholder="메시지 입력…" autocomplete="off" />
+          <button class="btn btn-main btn-sm" type="submit">전송</button>
+        </form>
+      </section>
+
+      <div class="play-col">
+        <div class="hud">
+          <div class="pill">
+            <div class="pill-ham" data-hamster></div>
+            <span><b id="hud-found">0</b>/<span id="hud-total">0</span></span>
+          </div>
+          <div class="pill" id="hud-lives"></div>
+          <div class="pill timer" id="hud-timer">00:00</div>
+        </div>
+
+        <div class="rules" title="눌러서 자세한 규칙 보기">
+          <button class="rule" data-rule="color"><span class="rule-ico">🎨</span><span>색깔당<br />햄스터 1마리</span></button>
+          <button class="rule" data-rule="line"><span class="rule-ico">➕</span><span>행과 열마다<br />햄스터 1마리</span></button>
+          <button class="rule" data-rule="touch"><span class="rule-ico">🚫</span><span>햄스터<br />접촉 불가</span></button>
+          <button class="rule gold-rule hidden" id="rule-gold" data-rule="gold"><span class="rule-ico">✨</span><span id="rule-gold-text"></span></button>
+        </div>
+
+        <div class="board-wrap">
+          <div id="board" class="board"></div>
+          <div id="blind" class="blind hidden"></div>
+          <div id="banner" class="banner hidden"></div>
+          <div id="overlay" class="overlay hidden"></div>
+        </div>
+
+        <div class="tools">
+          <button id="btn-clear" class="tool" title="X 모두 지우기">
+            <svg viewBox="0 0 24 24"><path d="M5 7h14M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>X 지우기</span>
+          </button>
+          <button id="btn-auto" class="tool" title="햄스터를 찾으면 주변을 자동으로 X">
+            <span class="auto-x">✕</span>
+            <span>자동 X <b id="auto-state">OFF</b></span>
+          </button>
+          <button id="btn-giveup" class="tool" title="이번 판 포기">
+            <span class="auto-x">🏳️</span>
+            <span>포기</span>
+          </button>
+        </div>
+        <div class="emotes" id="emotes"></div>
+        <p class="hint">드래그로 <b>X 표시</b> · 더블클릭(더블탭)으로 <b>햄스터 찾기!</b></p>
+      </div>
+
+      <aside class="side-col">
+        <h3 class="side-title">친구들 화면 <span class="live-dot"></span> LIVE</h3>
+        <div id="others" class="others"></div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- 규칙 설명 -->
+  <div id="rule-modal" class="modal hidden">
+    <div class="panel modal-panel rule-panel">
+      <button class="modal-close" data-close>✕</button>
+      <div class="seg rule-tabs" id="rule-tabs"></div>
+      <div id="rule-body"></div>
+      <p class="rule-foot">틀린 칸을 더블클릭하면 해바라기씨(생명)가 하나 줄어요. 3번 틀리면 탈락!</p>
+    </div>
+  </div>
+
+  <!-- 랭킹 -->
+  <div id="modal" class="modal hidden">
+    <div class="panel modal-panel">
+      <button class="modal-close" data-close>✕</button>
+      <h2>🏆 랭킹</h2>
+      <div id="leaderboard" class="leaderboard"></div>
+      <details class="howto">
+        <summary>랭크 점수 규칙</summary>
+        <div id="rank-guide"></div>
+      </details>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="fx" class="fx"></div>
+
+  <script src="/hamster.js"></script>
+  <script src="/sound.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
